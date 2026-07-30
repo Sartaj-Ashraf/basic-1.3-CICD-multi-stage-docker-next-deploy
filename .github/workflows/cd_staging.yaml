@@ -67,9 +67,8 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           envs: IMAGE,CONTAINER,PORT
           script: |
-
-            echo "Image is $IMAGE"
-
+            set -Eeou pipefail
+            
             docker pull "$IMAGE":latest 
 
             echo "Next step"
@@ -80,14 +79,16 @@ jobs:
               echo "Stopping and removing existing container"
               docker stop "$CONTAINER"
               docker rm "$CONTAINER"
+            else
+              echo "No existing container found, creating a fresh one"
             fi
 
             echo "Starting new container..."
             docker run -d \
-              --name "$CONTAINER" \
-              --restart unless-stopped \
               -e PORT=3030 \
               -p 3030:3030 \
+              --name "$CONTAINER" \
+              --restart unless-stopped \
               --hostname localhost \
               "$IMAGE"
 
