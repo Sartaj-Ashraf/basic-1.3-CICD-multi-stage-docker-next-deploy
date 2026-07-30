@@ -1,0 +1,56 @@
+# This workflow is triggered when code is pushed to the main branch
+# It performs the following steps:
+# 1. Checks out the code.
+    # -> uses: actions/checkout@v2
+
+# 2. Logs into Docker Hub.
+    # -> uses: docker/login-action@v2
+      #  with: username and password
+    
+# 3. Builds a Docker image.
+    # -> uses: docker/build-push-action@v7
+
+# 4. Pushes the image to Docker Hub.
+    # -> uses: docker/build-push-action@v7
+
+# 5. Deploys the image to a VM by:
+#    a. SSHing into the machine.
+#    b. Stopping the existing container.
+#    c. Running the new container.
+
+name: Deploy dockerized Next.js app to staging
+on:
+  push:
+    branches: [main]
+env:
+  IMAGE_NAME: sartajashraf/basic-1.3-cicd-multi-stage-docker-next-deploy
+  CONTEXT: frontend
+  DOCKERFILE: ./docker/Dockerfile.frontend
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Login to docker hub
+        uses: docker@login-action@v4
+        with:
+          username: ${{secrets.DOCKER_USERNAME}}
+          password: ${{secrets.DOCKE_PASSWORD}}
+      
+      - name: Build and push image
+        uses: docker@build-push-action@v7
+        with:
+          context: ${{env.CONTEXT}}
+          file: ${{env.DOCKERFILE}}
+          push: true
+          tags: |
+            ${{env.IMAGE_NAME}}:${{ github.sha }}
+            ${{env.IMAGE_NAME}}:latest
