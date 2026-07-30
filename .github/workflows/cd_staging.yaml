@@ -1,36 +1,31 @@
-# This workflow is triggered when code is pushed to the main branch
-# It performs the following steps:
-# 1. Checks out the code.
-    # -> uses: actions/checkout@v2
-
-# 2. Logs into Docker Hub.
-    # -> uses: docker/login-action@v2
-      #  with: username and password
-    
-# 3. Builds a Docker image.
-    # -> uses: docker/build-push-action@v7
-
-# 4. Pushes the image to Docker Hub.
-    # -> uses: docker/build-push-action@v7
-
-# 5. Deploys the image to a VM by:
-#    a. SSHing into the machine.
-#    b. Stopping the existing container.
-#    c. Running the new container.
+# Triggered on push to main. Builds the frontend image, pushes to Docker Hub,
+# then does a health-gated, rollback-capable deploy to the staging VM.
+#
+# Deploy strategy: start NEW container under a temp name -> health-check it ->
+# only then retire the OLD container -> rename NEW into the canonical name.
+# If the health check fails, the NEW container is torn down and the OLD one
+# is left running untouched (automatic rollback, zero forced downtime).
 
 name: Deploy dockerized Next.js app to staging
+
 on:
   push:
     branches: [main]
+
+permissions:
+  contents: read
+
 env:
   IMAGE_NAME: sartajashraf/basic-1.3-cicd-multi-stage-docker-next-deploy
   CONTEXT: frontend
   DOCKERFILE: ./docker/Dockerfile.frontend
-  PORT: 3030
+  APP_PORT: 3030
+  CONTAINER_NAME: basic-frontend
 
 jobs:
   build_and_deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}
@@ -38,29 +33,33 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Login to docker hub
-        uses: docker/login-action@v4
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
         with:
-          username: ${{secrets.DOCKERHUB_USERNAME}}
-          password: ${{secrets.DOCKERHUB_PASSWORD}}
-      
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          # Prefer a Docker Hub access token over the account password.
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
       - name: Build and push image
         uses: docker/build-push-action@v7
         with:
-          context: ${{env.CONTEXT}}
-          file: ${{env.DOCKERFILE}}
+          context: ${{ env.CONTEXT }}
+          file: ${{ env.DOCKERFILE }}
           push: true
           tags: |
-            ${{env.IMAGE_NAME}}:${{ github.sha }}
-            ${{env.IMAGE_NAME}}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - name: SSH to the server and deploy
+      - name: SSH to the server and deploy (health-gated, with rollback)
         uses: appleboy/ssh-action@v1
         env:
           IMAGE: ${{ env.IMAGE_NAME }}:${{ github.sha }}
           PORT: ${{ env.APP_PORT }}
+          CONTAINER: ${{ env.CONTAINER_NAME }}
         with:
           host: ${{ secrets.SSH_HOST_IP }}
           username: ${{ secrets.SSH_HOST_USER }}
@@ -68,29 +67,74 @@ jobs:
           envs: IMAGE,CONTAINER,PORT
           script: |
             set -Eeou pipefail
-            
-            docker pull "$IMAGE":latest 
 
-            echo "Next step"
-            CONTAINER="basic-1.3-cicd-multi-stage"
-            PORT=3030
+            NEW_CONTAINER="${CONTAINER}-new"
+            HEALTH_URL="http://localhost:${PORT}"
+            MAX_RETRIES=10
+            RETRY_DELAY=3
 
-            if docker ps -q -f name="$CONTAINER" | grep -q .; then
-              echo "Stopping and removing existing container"
-              docker stop "$CONTAINER"
-              docker rm "$CONTAINER"
-            else
-              echo "No existing container found, creating a fresh one"
-            fi
+            cleanup_new_on_failure() {
+              echo "Rolling back: removing failed new container, old container stays up."
+              docker rm -f "$NEW_CONTAINER" >/dev/null 2>&1 || true
+            }
+            trap cleanup_new_on_failure ERR
 
-            echo "Starting new container..."
+            echo "Pulling image: $IMAGE"
+            docker pull "$IMAGE"
+
+            # Make sure a stale "-new" container from a previous failed run doesn't collide.
+            docker rm -f "$NEW_CONTAINER" >/dev/null 2>&1 || true
+
+            echo "Starting new container as $NEW_CONTAINER on a temporary host port..."
             docker run -d \
-              -e PORT=3030 \
-              -p 3030:3030 \
-              --name "$CONTAINER" \
+              -e PORT="$PORT" \
+              -p "127.0.0.1:0:$PORT" \
+              --name "$NEW_CONTAINER" \
               --restart unless-stopped \
-              --hostname localhost \
               "$IMAGE"
 
-            echo "Deployment completed successfully."
-          
+            # Resolve whichever host port Docker assigned for the health check.
+            HOST_PORT=$(docker port "$NEW_CONTAINER" "$PORT" | cut -d: -f2)
+            HEALTH_URL="http://localhost:${HOST_PORT}"
+
+            echo "Health-checking $NEW_CONTAINER at $HEALTH_URL ..."
+            healthy=false
+            for i in $(seq 1 "$MAX_RETRIES"); do
+              if curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
+                healthy=true
+                break
+              fi
+              echo "Attempt $i/$MAX_RETRIES not ready yet, retrying in ${RETRY_DELAY}s..."
+              sleep "$RETRY_DELAY"
+            done
+
+            if [ "$healthy" != "true" ]; then
+              echo "Health check FAILED after $MAX_RETRIES attempts."
+              cleanup_new_on_failure
+              trap - ERR
+              exit 1
+            fi
+
+            echo "Health check passed. Cutting over..."
+            trap - ERR
+
+            # Retire the old container (if any), then promote the new one.
+            if docker ps -aq -f name="^${CONTAINER}$" | grep -q .; then
+              docker stop "$CONTAINER" >/dev/null 2>&1 || true
+              docker rm "$CONTAINER" >/dev/null 2>&1 || true
+            fi
+
+            docker stop "$NEW_CONTAINER" >/dev/null
+            docker rm "$NEW_CONTAINER" >/dev/null
+
+            docker run -d \
+              -e PORT="$PORT" \
+              -p "${PORT}:${PORT}" \
+              --name "$CONTAINER" \
+              --restart unless-stopped \
+              "$IMAGE"
+
+            echo "Deployment completed successfully. Live image: $IMAGE"
+
+            echo "Pruning images older than 24h to control disk usage..."
+            docker image prune -af --filter "until=24h" || true
