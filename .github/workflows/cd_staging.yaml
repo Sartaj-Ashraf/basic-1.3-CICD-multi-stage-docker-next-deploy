@@ -128,7 +128,7 @@ jobs:
               -e PORT="$PORT" \
               -p "${PORT}:${PORT}" \
               --name "$CONTAINER" \
-              -e HOSTNAME=0.0.0.0 \
+              -e HOSTNAME=127.0.0.1 \
               --restart unless-stopped \
               "$IMAGE"
 
