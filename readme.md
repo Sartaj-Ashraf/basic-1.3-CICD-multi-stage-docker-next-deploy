@@ -1,6 +1,6 @@
-#  Next.js Multi-Stage Docker Deployment
+#  Next.js Multi-Stage Docker Deployment with CI/CD
 
-A production-ready example demonstrating how to containerize a **Next.js** application using a **multi-stage Docker build**. This approach creates a lightweight runtime image by separating the build process from the final production environment.
+A production-ready example demonstrating how to containerize a **Next.js** application using a **multi-stage Docker build**. This approach creates a lightweight runtime image by separating the build process from the final production environment. It also includes a **CI/CD** workflow setup using **GitHub Actions** under `.github/workflows`.
 
 ---
 
@@ -12,6 +12,7 @@ A production-ready example demonstrating how to containerize a **Next.js** appli
 - ✅ Configurable application port
 - ✅ Minimal runtime dependencies
 - ✅ Easy to build and run
+- ✅ CI/CD workflow with GitHub Actions
 
 ---
 
@@ -19,6 +20,8 @@ A production-ready example demonstrating how to containerize a **Next.js** appli
 
 ```text
 .
+├── .github/
+│   └── workflows/
 ├── docker/
 │   └── Dockerfile.frontend
 ├── frontend/
@@ -28,6 +31,12 @@ A production-ready example demonstrating how to containerize a **Next.js** appli
 │   └── ...
 └── README.md
 ```
+
+---
+
+##  CI/CD with GitHub Actions
+
+This project is set up for automated **CI/CD** using workflow files in the `.github/workflows` directory. These workflows can help build, test, and deploy the Dockerized Next.js application automatically.
 
 ---
 

@@ -14,11 +14,9 @@ export default function Home() {
       console.error("Error fetching products:", error);
     }
   }, []);
-  console.log("data", data);
-
   return (
     <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <h1>Welcome to Sartaj.Space!</h1>
+      <h1>Welcome to Sartaj.Space! CID</h1>
       {data && (
         <div>
           <h2>Products</h2>
