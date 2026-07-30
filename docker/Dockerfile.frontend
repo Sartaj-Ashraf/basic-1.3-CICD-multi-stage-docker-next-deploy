@@ -9,11 +9,13 @@ RUN npm run build
 FROM node:20-alpine
 
 WORKDIR /app
+RUN mkdir frontend
+COPY --from=builder package*.json ./app/frontend
+COPY --from=builder /app/.next/standalone /app/frontend
+COPY --from=builder /app/.next/static /app/frontend/.next/static
+COPY --from=builder /app/public /app/frontend/public
 
-COPY package*.json ./
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public  
+WORKDIR /app/frontend  
     
 EXPOSE 3030
 CMD ["npm", "run", "start"]
