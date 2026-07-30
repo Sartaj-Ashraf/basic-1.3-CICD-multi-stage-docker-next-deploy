@@ -1,14 +1,32 @@
+# This workflow is triggered when code is pushed to the main branch
+# It performs the following steps:
+# 1. Checks out the code.
+    # -> uses: actions/checkout@v2
+
+# 2. Logs into Docker Hub.
+    # -> uses: docker/login-action@v2
+      #  with: username and password
+    
+# 3. Builds a Docker image.
+    # -> uses: docker/build-push-action@v7
+
+# 4. Pushes the image to Docker Hub.
+    # -> uses: docker/build-push-action@v7
+
+# 5. Deploys the image to a VM by:
+#    a. SSHing into the machine.
+#    b. Stopping the existing container.
+#    c. Running the new container.
+
 name: Deploy dockerized Next.js app to staging
 on:
   push:
     branches: [main]
-
 env:
   IMAGE_NAME: sartajashraf/basic-1.3-cicd-multi-stage-docker-next-deploy
   CONTEXT: frontend
   DOCKERFILE: ./docker/Dockerfile.frontend
-  CONTAINER_NAME: basic-1.3-cicd-multi-stage
-  APP_PORT: 3030
+  PORT: 3030
 
 jobs:
   build_and_deploy:
@@ -20,23 +38,23 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: actions/checkout@v3
+      
+      - name: Login to docker hub
+        uses: docker/login-action@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
-
+          username: ${{secrets.DOCKERHUB_USERNAME}}
+          password: ${{secrets.DOCKERHUB_PASSWORD}}
+      
       - name: Build and push image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
-          context: ${{ env.CONTEXT }}
-          file: ${{ env.DOCKERFILE }}
+          context: ${{env.CONTEXT}}
+          file: ${{env.DOCKERFILE}}
           push: true
           tags: |
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.IMAGE_NAME }}:latest
+            ${{env.IMAGE_NAME}}:${{ github.sha }}
+            ${{env.IMAGE_NAME}}:latest
 
       - name: SSH to the server and deploy
         uses: appleboy/ssh-action@v1
@@ -48,64 +66,29 @@ jobs:
           host: ${{ secrets.SSH_HOST_IP }}
           username: ${{ secrets.SSH_HOST_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          envs: IMAGE,CONTAINER,PORT
           script: |
-            set -euo pipefail
 
-            echo "Deploying image: $IMAGE on port $PORT"
+            echo "Image is $IMAGE"
 
-            docker pull "$IMAGE"
+            docker pull "$IMAGE_NAME":latest 
 
-            OLD_CONTAINER="${CONTAINER}-old"
-            NEW_CONTAINER="${CONTAINER}-new"
+            echo "Next step"
+            CONTAINER="basic-1.3-cicd-multi-stage"
+            PORT=3030
 
-            # Clean up any stale containers from a previous failed run
-            docker rm -f "$NEW_CONTAINER" 2>/dev/null || true
-            docker rm -f "$OLD_CONTAINER" 2>/dev/null || true
-
-            echo "Starting new container alongside the old one..."
-            docker run -d \
-              --name "$NEW_CONTAINER" \
-              --restart unless-stopped \
-              -e PORT="$PORT" \
-              -p "127.0.0.1:$((PORT+1)):$PORT" \
-              "$IMAGE"
-
-            echo "Waiting for health check..."
-            HEALTHY=false
-            for i in $(seq 1 10); do
-              if curl -sf "http://127.0.0.1:$((PORT+1))/" >/dev/null; then
-                HEALTHY=true
-                break
-              fi
-              sleep 3
-            done
-
-            if [ "$HEALTHY" != "true" ]; then
-              echo "New container failed health check. Rolling back."
-              docker logs "$NEW_CONTAINER" --tail 50 || true
-              docker rm -f "$NEW_CONTAINER"
-              exit 1
+            if docker ps -q -f name="$CONTAINER" | grep -q .; then
+              echo "Stopping and removing existing container"
+              docker stop "$CONTAINER"
+              docker rm "$CONTAINER"
             fi
 
-            echo "Health check passed. Cutting over..."
-            docker rm -f "$NEW_CONTAINER"
-
-            if docker ps -q -f name="^${CONTAINER}$" | grep -q .; then
-              docker rename "$CONTAINER" "$OLD_CONTAINER"
-              docker stop "$OLD_CONTAINER" || true
-            fi
-
+            echo "Starting new container..."
             docker run -d \
               --name "$CONTAINER" \
               --restart unless-stopped \
-              -e PORT="$PORT" \
-              -p "$PORT:$PORT" \
+              -e PORT=5030 \
+              -p 5030:5030 \
               "$IMAGE"
 
-            docker rm -f "$OLD_CONTAINER" 2>/dev/null || true
-
-            echo "Pruning dangling images..."
-            docker image prune -f
-
             echo "Deployment completed successfully."
+          
