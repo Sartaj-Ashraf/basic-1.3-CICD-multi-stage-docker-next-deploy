@@ -67,19 +67,19 @@ jobs:
             CONTAINER="basic-1.3-cicd-multi-stage"
             PORT=3030
 
-            if docker ps -q -f name="$CONTAINER" | grep -q ,; then
-              echo "Stoping the exisiting container..."
+            if docker ps -q -f name="$CONTAINER" | grep -q .; then
+              echo "Stopping and removing existing container"
               docker stop "$CONTAINER"
               docker rm "$CONTAINER"
             fi
 
-            echo "Starting the new docker file"
+            echo "Starting new container..."
             docker run -d \
-              --name "$CONTAINER"" \
+              --name "$CONTAINER" \
               --restart unless-stopped \
-              -e PORT="$PORT" \
+              -e PORT=5030
               -p 5030:5030 \
               "$IMAGE"
 
-              echo "Deployment Completed"
+            echo "Deployment completed successfully."
           
