@@ -10,7 +10,6 @@ FROM node:20-alpine
 
 WORKDIR /app
 RUN mkdir frontend
-COPY --from=builder package*.json ./app/frontend
 COPY --from=builder /app/.next/standalone /app/frontend
 COPY --from=builder /app/.next/static /app/frontend/.next/static
 COPY --from=builder /app/public /app/frontend/public
@@ -18,4 +17,4 @@ COPY --from=builder /app/public /app/frontend/public
 WORKDIR /app/frontend  
     
 EXPOSE 3030
-CMD ["npm", "run", "start"]
+CMD ["node", "server.js"]
